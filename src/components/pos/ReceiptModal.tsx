@@ -26,34 +26,30 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ bill, onClose }) => 
     window.print();
   };
 
-  const handleShareWhatsApp = () => {
-    const phone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '') : '';
-    const itemsList = bill.items
+  const phone = bill.customerPhone ? bill.customerPhone.replace(/[^0-9]/g, '') : '';
+  const messageText =
+    `*${businessProfile.name} - Bill Receipt*\n` +
+    `Bill No: ${bill.billNumber}\n` +
+    `Date: ${bill.createdAt}\n` +
+    `Order: ${bill.orderType.toUpperCase()}${bill.tableNumber ? ` (Table ${bill.tableNumber})` : ''}\n\n` +
+    `*Items:*\n` +
+    bill.items
       .map(
         i =>
           `• ${i.name}${i.variantName ? ` (${i.variantName})` : ''} x ${i.quantity} = ₹${
             i.sellingPrice * i.quantity
           }`
       )
-      .join('%0A');
+      .join('\n') +
+    `\n\nSubtotal: ₹${bill.subtotal}\n` +
+    (bill.discount > 0 ? `Discount: -₹${bill.discount}\n` : '') +
+    `*Total: ₹${bill.total}*\n` +
+    `Payment: ${bill.paymentMethod.toUpperCase()} (${bill.paymentStatus.toUpperCase()})\n\n` +
+    `Thank you for visiting ${businessProfile.name}!`;
 
-    const message = `*${businessProfile.name} - Bill Receipt*%0A` +
-      `Bill No: ${bill.billNumber}%0A` +
-      `Date: ${bill.createdAt}%0A` +
-      `Order: ${bill.orderType.toUpperCase()}${bill.tableNumber ? ` (Table ${bill.tableNumber})` : ''}%0A%0A` +
-      `*Items:*%0A${itemsList}%0A%0A` +
-      `Subtotal: ₹${bill.subtotal}%0A` +
-      (bill.discount > 0 ? `Discount: -₹${bill.discount}%0A` : '') +
-      `*Total: ₹${bill.total}*%0A` +
-      `Payment: ${bill.paymentMethod.toUpperCase()} (${bill.paymentStatus.toUpperCase()})%0A%0A` +
-      `Thank you for visiting ${businessProfile.name}!`;
-
-    const url = phone
-      ? `https://wa.me/91${phone}?text=${message}`
-      : `https://wa.me/?text=${message}`;
-
-    window.open(url, '_blank');
-  };
+  const whatsAppUrl = phone
+    ? `https://wa.me/91${phone}?text=${encodeURIComponent(messageText)}`
+    : `https://wa.me/?text=${encodeURIComponent(messageText)}`;
 
   const handleNewOrder = () => {
     onClose();
@@ -213,13 +209,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ bill, onClose }) => 
             <span>{t('printReceipt')}</span>
           </button>
 
-          <button
-            onClick={handleShareWhatsApp}
+          <a
+            href={whatsAppUrl}
+            target="_blank"
+            rel="noopener noreferrer"
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm transition-colors cursor-pointer"
           >
             <Share2 className="w-4 h-4" />
             <span>WhatsApp</span>
-          </button>
+          </a>
 
           <button
             onClick={handleNewOrder}

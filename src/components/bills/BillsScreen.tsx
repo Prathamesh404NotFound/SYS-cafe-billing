@@ -351,12 +351,12 @@ export const BillsScreen: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filteredBills.map(b => (
-                    <tr
-                      key={b.id}
-                      className={`hover:bg-slate-50/80 transition-colors ${
-                        b.isRefunded ? 'bg-red-50/30 text-gray-400' : ''
-                      }`}
-                    >
+                    <React.Fragment key={b.id}>
+                      <tr
+                        className={`hover:bg-slate-50/80 transition-colors ${
+                          b.isRefunded ? 'bg-red-50/30 text-gray-400' : ''
+                        }`}
+                      >
                       {/* Bill details */}
                       <td className="py-4 px-5">
                         <div className="font-mono font-black text-sm text-gray-900">
@@ -382,12 +382,46 @@ export const BillsScreen: React.FC = () => {
                       </td>
 
                       {/* Items Summary */}
-                      <td className="py-4 px-5 max-w-xs">
-                        <div className="text-gray-800 font-medium truncate" title={b.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}>
-                          {b.items.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                      <td className="py-4 px-5">
+                        <div className="flex flex-wrap items-center gap-1.5 max-w-sm">
+                          {b.items.slice(0, 2).map((item, idx) => (
+                            <span
+                              key={idx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-gray-200/80 text-[11px] font-semibold text-gray-800"
+                            >
+                              <span className="font-bold text-orange-600">{item.quantity}×</span>
+                              <span className="truncate max-w-[110px]">{item.name}</span>
+                              {item.variantName && (
+                                <span className="text-[9px] text-gray-500">({item.variantName})</span>
+                              )}
+                            </span>
+                          ))}
+                          {b.items.length > 2 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(b.id)}
+                              className="text-[10px] font-bold text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                            >
+                              +{b.items.length - 2} more
+                            </button>
+                          )}
                         </div>
-                        <div className="text-[11px] text-gray-400 mt-0.5">
-                          {b.items.reduce((s, i) => s + i.quantity, 0)} total dish quantity
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[11px] text-gray-400">
+                            {b.items.reduce((s, i) => s + i.quantity, 0)} items total
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleExpand(b.id)}
+                            className="text-[11px] font-bold text-gray-500 hover:text-gray-800 inline-flex items-center gap-0.5 cursor-pointer"
+                          >
+                            <span>{expandedBillId === b.id ? 'Hide items' : 'View dishes'}</span>
+                            {expandedBillId === b.id ? (
+                              <ChevronUp className="w-3 h-3" />
+                            ) : (
+                              <ChevronDown className="w-3 h-3" />
+                            )}
+                          </button>
                         </div>
                       </td>
 
@@ -466,8 +500,60 @@ export const BillsScreen: React.FC = () => {
                         </div>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
+
+                    {/* Desktop Expanded Order Items Sub-row */}
+                    {expandedBillId === b.id && (
+                      <tr key={`${b.id}-details`} className="bg-slate-50/90 border-b border-gray-200 animate-in fade-in duration-150">
+                        <td colSpan={9} className="py-3 px-6">
+                          <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3 shadow-2xs">
+                            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                              <span className="font-extrabold text-xs text-gray-900 uppercase tracking-wider">
+                                Full Order Items Breakdown for {b.billNumber}
+                              </span>
+                              <span className="text-xs text-gray-500 font-medium">
+                                Cashier: {b.createdBy} · {b.createdAt}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                              {b.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  className="p-2.5 rounded-lg bg-slate-50 border border-gray-200/80 flex items-center justify-between text-xs"
+                                >
+                                  <div>
+                                    <span className="font-bold text-gray-900 block">{item.name}</span>
+                                    <div className="flex items-center gap-1.5 text-[11px] text-gray-500 mt-0.5">
+                                      <span>Rate: ₹{item.sellingPrice}</span>
+                                      {item.variantName && (
+                                        <span className="text-orange-600 font-semibold">({item.variantName})</span>
+                                      )}
+                                      <span>× {item.quantity}</span>
+                                    </div>
+                                  </div>
+                                  <span className="font-mono font-bold text-gray-900 text-sm">
+                                    ₹{item.sellingPrice * item.quantity}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs text-gray-600">
+                              <div>
+                                {b.discount > 0 && (
+                                  <span className="text-orange-600 font-bold mr-4">Discount Applied: -₹{b.discount}</span>
+                                )}
+                                <span>Subtotal: ₹{b.subtotal}</span>
+                              </div>
+                              <div className="font-black text-gray-900 text-sm">
+                                Total Bill: <span className="text-orange-600">₹{b.total}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
               </table>
             </div>
           </div>

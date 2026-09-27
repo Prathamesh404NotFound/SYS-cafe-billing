@@ -13,6 +13,12 @@ import { KitchenOrder } from '../../types';
 
 export const KitchenScreen: React.FC = () => {
   const { kitchenOrders, updateKitchenOrderStatus, t } = useApp();
+  const [doneItems, setDoneItems] = React.useState<Record<string, boolean>>({});
+
+  const toggleItemDone = (orderId: string, itemIdx: number) => {
+    const key = `${orderId}-${itemIdx}`;
+    setDoneItems(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const activeOrders = kitchenOrders.filter(o => o.status !== 'completed');
   const completedOrders = kitchenOrders.filter(o => o.status === 'completed');
@@ -85,31 +91,50 @@ export const KitchenScreen: React.FC = () => {
 
                 {/* Items List */}
                 <div className="py-2 space-y-2">
-                  {order.items.map((it, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-start justify-between p-2 rounded-xl bg-slate-50 border border-gray-100"
-                    >
-                      <div>
-                        <span className="font-bold text-xs text-gray-900 block">
-                          {it.name}
+                  {order.items.map((it, idx) => {
+                    const isDone = !!doneItems[`${order.id}-${idx}`];
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => toggleItemDone(order.id, idx)}
+                        className={`flex items-start justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                          isDone
+                            ? 'bg-emerald-50/70 border-emerald-200 opacity-60'
+                            : 'bg-slate-50 border-gray-100 hover:border-orange-200'
+                        }`}
+                        title="Click to toggle prep status"
+                      >
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isDone}
+                            onChange={() => {}}
+                            className="mt-0.5 rounded text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          />
+                          <div>
+                            <span className={`font-bold text-xs text-gray-900 block ${isDone ? 'line-through text-gray-400' : ''}`}>
+                              {it.name}
+                            </span>
+                            {it.variant && (
+                              <span className="text-[10px] font-bold text-orange-600">
+                                Portion: {it.variant}
+                              </span>
+                            )}
+                            {it.notes && (
+                              <span className="text-[10px] text-red-600 block italic">
+                                * {it.notes}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-lg font-black text-xs shrink-0 ${
+                          isDone ? 'bg-emerald-100 text-emerald-800' : 'bg-orange-100 text-orange-950'
+                        }`}>
+                          x{it.quantity}
                         </span>
-                        {it.variant && (
-                          <span className="text-[10px] font-bold text-orange-600">
-                            Portion: {it.variant}
-                          </span>
-                        )}
-                        {it.notes && (
-                          <span className="text-[10px] text-red-600 block italic">
-                            * {it.notes}
-                          </span>
-                        )}
                       </div>
-                      <span className="px-2 py-0.5 rounded-lg bg-orange-100 text-orange-950 font-black text-xs">
-                        x{it.quantity}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

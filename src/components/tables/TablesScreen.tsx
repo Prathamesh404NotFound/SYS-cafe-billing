@@ -8,7 +8,7 @@ import { useApp } from '../../context/AppContext';
 import { TableItem } from '../../types';
 
 export const TablesScreen: React.FC = () => {
-  const { tables, updateTableStatus, setSelectedTable, setActiveTab, t } = useApp();
+  const { tables, updateTableStatus, setSelectedTable, setActiveTab, kitchenOrders, bills, t } = useApp();
 
   const handleSelectTableForPOS = (table: TableItem) => {
     setSelectedTable(table.number);
@@ -88,16 +88,40 @@ export const TablesScreen: React.FC = () => {
 
                 {/* Bill info if occupied */}
                 {table.orderTotal !== undefined && table.orderTotal > 0 ? (
-                  <div className="mt-3 p-2 rounded-xl bg-white border border-gray-200 text-center">
-                    <span className="text-[10px] text-gray-400 block">Current Bill</span>
-                    <span className="font-black text-sm text-gray-900">
-                      ₹{table.orderTotal}
-                    </span>
-                    {table.customerName && (
-                      <span className="text-[10px] text-gray-500 block truncate mt-0.5">
-                        {table.customerName}
+                  <div className="mt-3 p-2.5 rounded-xl bg-white border border-gray-200 text-center space-y-1.5">
+                    <div>
+                      <span className="text-[10px] text-gray-400 block font-semibold">Current Bill</span>
+                      <span className="font-black text-sm text-gray-900">
+                        ₹{table.orderTotal}
                       </span>
-                    )}
+                      {table.customerName && (
+                        <span className="text-[10px] text-gray-500 block truncate font-medium">
+                          {table.customerName}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Active Order Items Preview */}
+                    {(() => {
+                      const activeKitchen = kitchenOrders.find(
+                        ko => String(ko.tableNumber) === String(table.number) && ko.status !== 'completed'
+                      );
+                      const latestBill = bills.find(
+                        b => String(b.tableNumber) === String(table.number) && !b.isRefunded
+                      );
+                      const itemsList = activeKitchen?.items || latestBill?.items;
+                      if (!itemsList || itemsList.length === 0) return null;
+                      return (
+                        <div className="text-[10px] text-left bg-orange-50/70 p-1.5 rounded-lg border border-orange-100 text-gray-700">
+                          <span className="font-bold text-orange-800 block text-[9px] uppercase">
+                            Order Items:
+                          </span>
+                          <span className="line-clamp-2 leading-tight">
+                            {itemsList.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="mt-3 py-2 text-center text-xs text-gray-400">
