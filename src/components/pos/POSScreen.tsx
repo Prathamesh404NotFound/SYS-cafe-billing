@@ -20,7 +20,10 @@ import {
   Copy,
   Download,
   ExternalLink,
-  Utensils
+  Utensils,
+  CloudOff,
+  RefreshCw,
+  Database
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { MenuItem, PaymentMethod, OrderType, TableItem } from '../../types';
@@ -60,7 +63,11 @@ export const POSScreen: React.FC = () => {
     t,
     customers,
     businessProfile,
-    tables
+    tables,
+    isOnline,
+    pendingSyncCount,
+    isFirestoreSyncing,
+    syncPendingOrdersToFirestoreNow
   } = useApp();
 
   const [mobilePosView, setMobilePosView] = useState<'menu' | 'cart'>('menu');
@@ -689,7 +696,11 @@ export const POSScreen: React.FC = () => {
             className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-40 text-white font-black rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <Check className="w-4 h-4 stroke-[3]" />
-            <span>Complete & Pay • ₹{cartTotal}</span>
+            <span>
+              {!isOnline
+                ? `Save Bill (Offline) • ₹${cartTotal}`
+                : `Complete & Pay • ₹${cartTotal}`}
+            </span>
           </button>
         </div>
 
@@ -755,6 +766,60 @@ export const POSScreen: React.FC = () => {
           mobilePosView === 'menu' ? 'flex' : 'hidden lg:flex'
         }`}
       >
+        {/* Offline / Firestore Sync Alert Banner */}
+        {!isOnline && (
+          <div className="mx-2.5 mt-2 px-3 py-2 rounded-xl bg-amber-500 text-white text-xs font-semibold flex items-center justify-between gap-2 shadow-xs shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <CloudOff className="w-4 h-4 shrink-0 animate-pulse text-amber-100" />
+              <div className="min-w-0">
+                <div className="font-extrabold flex items-center gap-1.5 leading-tight">
+                  <span>POS Offline Mode (IndexedDB Active)</span>
+                  {pendingSyncCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-800 text-white text-[9px] font-mono font-bold">
+                      {pendingSyncCount} queued
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-amber-100 truncate">
+                  Orders cached locally. Will auto-sync to Firestore once reconnected.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isFirestoreSyncing}
+              onClick={() => syncPendingOrdersToFirestoreNow()}
+              className="px-2.5 py-1 bg-white text-amber-900 rounded-lg font-bold text-[11px] shrink-0 hover:bg-amber-50 transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+            >
+              {isFirestoreSyncing ? 'Syncing...' : 'Retry'}
+            </button>
+          </div>
+        )}
+
+        {isOnline && pendingSyncCount > 0 && (
+          <div className="mx-2.5 mt-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold flex items-center justify-between gap-2 shadow-xs shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw className={`w-4 h-4 shrink-0 ${isFirestoreSyncing ? 'animate-spin' : ''} text-blue-200`} />
+              <div className="min-w-0">
+                <span className="font-extrabold leading-tight block">
+                  Auto-Syncing {pendingSyncCount} Offline Orders to Firestore
+                </span>
+                <p className="text-[11px] text-blue-100 truncate">
+                  Connection restored! Syncing cached IndexedDB orders with Firestore...
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isFirestoreSyncing}
+              onClick={() => syncPendingOrdersToFirestoreNow()}
+              className="px-2.5 py-1 bg-white text-blue-900 rounded-lg font-bold text-[11px] shrink-0 hover:bg-blue-50 transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
+            >
+              {isFirestoreSyncing ? 'Syncing...' : 'Sync Now'}
+            </button>
+          </div>
+        )}
+
         {/* Active Dining Tables (Eating / Pay After Dining) Quick Strip */}
         {occupiedTables.length > 0 && (
           <div className="px-3 py-2 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200/90 shrink-0">

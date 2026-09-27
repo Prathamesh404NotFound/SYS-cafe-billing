@@ -11,17 +11,30 @@ import {
   off,
   DatabaseReference
 } from "firebase/database";
+import {
+  getFirestore,
+  Firestore,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  query,
+  orderBy,
+  limit,
+  serverTimestamp
+} from "firebase/firestore";
 
-// Web app's Firebase configuration provided by user
+// Web app's Firebase configuration (supports .env via import.meta.env)
 export const firebaseConfig = {
-  apiKey: "AIzaSyDGeIyIxQ-Au77JOTHUj_boaAWBsidhYFc",
-  authDomain: "sys-cafe.firebaseapp.com",
-  databaseURL: "https://sys-cafe-default-rtdb.firebaseio.com",
-  projectId: "sys-cafe",
-  storageBucket: "sys-cafe.firebasestorage.app",
-  messagingSenderId: "259469191590",
-  appId: "1:259469191590:web:821ec6a6db8ec053d38767",
-  measurementId: "G-ER7XWQWCTN"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDGeIyIxQ-Au77JOTHUj_boaAWBsidhYFc",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "sys-cafe.firebaseapp.com",
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://sys-cafe-default-rtdb.firebaseio.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "sys-cafe",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "sys-cafe.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "259469191590",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:259469191590:web:821ec6a6db8ec053d38767",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-ER7XWQWCTN"
 };
 
 // Initialize Firebase App
@@ -29,6 +42,9 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 
 // Initialize Firebase Realtime Database
 export const rtdb = getDatabase(app);
+
+// Initialize Firebase Firestore
+export const firestore: Firestore = getFirestore(app);
 
 // Initialize Analytics safely
 export let analytics: any = null;

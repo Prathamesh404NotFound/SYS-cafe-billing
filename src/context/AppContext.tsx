@@ -43,6 +43,22 @@ import {
   writeToRtdb,
   RTDB_PATHS
 } from '../services/firebase';
+import {
+  cacheOrderInIndexedDB,
+  enqueueOrderForSync,
+  getPendingSyncCount,
+  cacheMenuInIndexedDB,
+  getCachedOrdersFromIndexedDB
+} from '../services/indexedDbService';
+import {
+  syncBillToFirestore,
+  syncKitchenOrderToFirestore,
+  processPendingFirestoreSyncQueue
+} from '../services/firestoreSync';
+import {
+  registerServiceWorker,
+  notifyServiceWorkerNewOrder
+} from '../services/serviceWorkerRegistration';
 
 interface NotificationItem {
   id: string;
@@ -70,6 +86,13 @@ interface AppContextType {
   firebaseSyncing: boolean;
   lastSyncTime: Date | null;
   manualSyncToCloud: () => Promise<void>;
+
+  // Offline & Firestore Sync for POS Module
+  isOnline: boolean;
+  pendingSyncCount: number;
+  isFirestoreSyncing: boolean;
+  lastFirestoreSyncTime: Date | null;
+  syncPendingOrdersToFirestoreNow: () => Promise<{ succeeded: number; failed: number }>;
 
   // Customer Calls (From Table QR codes)
   customerCalls: CustomerCall[];
@@ -241,7 +264,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [udhaarTransactions, setUdhaarTransactions] = useState<UdhaarTransaction[]>(() =>
     loadStorage('udhaar', initialUdhaarTransactions)
   );
-  const [suppliers, setSuppliers] = useState<Supplier[]>(() => loadStorage('suppliers', initialSuppliers));
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
+    const loaded = loadStorage('suppliers', initialSuppliers);
+    if (Array.isArray(loaded)) {
+      return loaded.filter(s => !['s1', 's2', 's3'].includes(s.id));
+    }
+    return [];
+  });
   const [purchases, setPurchases] = useState<Purchase[]>(() => loadStorage('purchases', initialPurchases));
   const [expenses, setExpenses] = useState<Expense[]>(() => loadStorage('expenses', initialExpenses));
   const [cashRegister, setCashRegister] = useState<CashRegister>(() =>
@@ -251,7 +280,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [kitchenOrders, setKitchenOrders] = useState<KitchenOrder[]>(() =>
     loadStorage('kitchen', initialKitchenOrders)
   );
-  const [staff, setStaff] = useState<StaffMember[]>(() => loadStorage('staff', initialStaffMembers));
+  const [staff, setStaff] = useState<StaffMember[]>(() => {
+    const loaded = loadStorage('staff', initialStaffMembers);
+    if (Array.isArray(loaded)) {
+      return loaded.filter(s => !['st-1', 'st-2', 'st-3'].includes(s.id));
+    }
+    return [];
+  });
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile>(() =>
     loadStorage('profile', initialBusinessProfile)
   );
@@ -267,6 +302,122 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [firebaseSyncing, setFirebaseSyncing] = useState<boolean>(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [customerCalls, setCustomerCalls] = useState<CustomerCall[]>([]);
+
+  // Offline & Firestore Sync for POS Module (Service Worker + IndexedDB)
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [isFirestoreSyncing, setIsFirestoreSyncing] = useState<boolean>(false);
+  const [lastFirestoreSyncTime, setLastFirestoreSyncTime] = useState<Date | null>(null);
+
+  // Sync pending offline orders from IndexedDB to Firestore
+  const syncPendingOrdersToFirestoreNow = async (): Promise<{ succeeded: number; failed: number }> => {
+    setIsFirestoreSyncing(true);
+    try {
+      const res = await processPendingFirestoreSyncQueue();
+      const count = await getPendingSyncCount();
+      setPendingSyncCount(count);
+
+      if (res.succeeded > 0) {
+        setLastFirestoreSyncTime(new Date());
+        setNotifications(prev => [
+          {
+            id: `fs-sync-${Date.now()}`,
+            type: 'success',
+            title: 'Firestore Sync Complete',
+            message: `Successfully synchronized ${res.succeeded} offline order${
+              res.succeeded > 1 ? 's' : ''
+            } from IndexedDB to Firestore!`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          },
+          ...prev
+        ]);
+      }
+      return { succeeded: res.succeeded, failed: res.failed };
+    } catch (err) {
+      console.error('Error syncing offline queue to Firestore:', err);
+      return { succeeded: 0, failed: 0 };
+    } finally {
+      setIsFirestoreSyncing(false);
+    }
+  };
+
+  // Service worker registration, IndexedDB initialization, and Auto-sync on connection restore
+  useEffect(() => {
+    // 1. Check initial pending orders count in IndexedDB
+    getPendingSyncCount().then(cnt => {
+      setPendingSyncCount(cnt);
+      if (cnt > 0 && navigator.onLine) {
+        syncPendingOrdersToFirestoreNow();
+      }
+    });
+
+    // 2. Cache initial menu & categories into IndexedDB for offline POS support
+    cacheMenuInIndexedDB(categories, menuItems);
+
+    // 3. Register Service Worker with Background Sync listener
+    registerServiceWorker({
+      onSyncTriggered: source => {
+        console.log(`Service Worker triggered sync from: ${source}`);
+        if (navigator.onLine) {
+          syncPendingOrdersToFirestoreNow();
+        }
+      }
+    });
+
+    // 4. Online and Offline window event listeners for automatic restoration sync
+    const handleOnline = () => {
+      setIsOnline(true);
+      setNotifications(prev => [
+        {
+          id: `online-${Date.now()}`,
+          type: 'info',
+          title: 'Internet Restored',
+          message: 'Connection is back! Automatically syncing cached IndexedDB orders to Firestore...',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+      // Trigger auto-sync to Firestore immediately upon reconnecting!
+      syncPendingOrdersToFirestoreNow();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setNotifications(prev => [
+        {
+          id: `offline-${Date.now()}`,
+          type: 'warning',
+          title: 'Offline Mode Active',
+          message: 'Internet disconnected. POS orders will be saved locally in IndexedDB and automatically synced to Firestore when reconnected.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // 5. Periodic check every 30s to sync pending queue if connected
+    const heartbeat = setInterval(() => {
+      if (navigator.onLine) {
+        getPendingSyncCount().then(c => {
+          setPendingSyncCount(c);
+          if (c > 0) {
+            syncPendingOrdersToFirestoreNow();
+          }
+        });
+      }
+    }, 30000);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(heartbeat);
+    };
+  }, []);
 
   // Flags to prevent echo writes between local state and RTDB
   const isRemoteUpdateRef = useRef<Record<string, boolean>>({});
@@ -814,6 +965,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Save bill
     setBills(prev => [newBill, ...prev]);
 
+    // 7. IndexedDB Caching and Automatic Firestore Sync for POS Module
+    cacheOrderInIndexedDB(newBill, isOnline ? 'synced' : 'pending');
+
+    if (isOnline) {
+      syncBillToFirestore(newBill).then(success => {
+        if (!success) {
+          enqueueOrderForSync(newBill.id, 'bill', newBill).then(() => {
+            getPendingSyncCount().then(setPendingSyncCount);
+            notifyServiceWorkerNewOrder();
+          });
+        } else {
+          setLastFirestoreSyncTime(new Date());
+        }
+      });
+    } else {
+      enqueueOrderForSync(newBill.id, 'bill', newBill).then(() => {
+        getPendingSyncCount().then(setPendingSyncCount);
+        notifyServiceWorkerNewOrder();
+      });
+      setNotifications(prev => [
+        {
+          id: `offline-order-${Date.now()}`,
+          type: 'warning',
+          title: 'Order Saved Offline in IndexedDB',
+          message: `Bill #${newBill.billNumber} is safely stored locally. Will auto-sync to Firestore when internet returns.`,
+          timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+    }
+
     // Set active receipt modal
     setActiveReceiptBill(newBill);
 
@@ -873,6 +1055,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setKitchenOrders(prev => [newKitchenTicket, ...prev]);
+
+    // Sync KOT to Firestore or queue in IndexedDB
+    if (isOnline) {
+      syncKitchenOrderToFirestore(newKitchenTicket);
+    } else {
+      enqueueOrderForSync(newKitchenTicket.id, 'kitchen_order', newKitchenTicket).then(() => {
+        getPendingSyncCount().then(setPendingSyncCount);
+        notifyServiceWorkerNewOrder();
+      });
+    }
 
     // Update table with active items & running total
     setTables(prev =>
@@ -1081,6 +1273,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Save Bill
     setBills(prev => [newBill, ...prev]);
+
+    // IndexedDB Caching & Firestore Sync for POS Module
+    cacheOrderInIndexedDB(newBill, isOnline ? 'synced' : 'pending');
+
+    if (isOnline) {
+      syncBillToFirestore(newBill).then(success => {
+        if (!success) {
+          enqueueOrderForSync(newBill.id, 'bill', newBill).then(() => {
+            getPendingSyncCount().then(setPendingSyncCount);
+            notifyServiceWorkerNewOrder();
+          });
+        } else {
+          setLastFirestoreSyncTime(new Date());
+        }
+      });
+    } else {
+      enqueueOrderForSync(newBill.id, 'bill', newBill).then(() => {
+        getPendingSyncCount().then(setPendingSyncCount);
+        notifyServiceWorkerNewOrder();
+      });
+      setNotifications(prev => [
+        {
+          id: `offline-settle-${Date.now()}`,
+          type: 'warning',
+          title: 'Table Bill Settled Offline',
+          message: `Table ${targetTableNum} bill #${newBill.billNumber} saved in IndexedDB. Will auto-sync to Firestore when connected.`,
+          timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+    }
 
     // Open receipt modal
     setActiveReceiptBill(newBill);
@@ -1573,6 +1796,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         firebaseSyncing,
         lastSyncTime,
         manualSyncToCloud,
+        isOnline,
+        pendingSyncCount,
+        isFirestoreSyncing,
+        lastFirestoreSyncTime,
+        syncPendingOrdersToFirestoreNow,
         customerCalls,
         dismissCustomerCall,
         resetAllData,

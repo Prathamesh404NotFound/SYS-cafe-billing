@@ -886,35 +886,7 @@ export const initialUdhaarTransactions: UdhaarTransaction[] = [];
 
 export const initialBills: Bill[] = [];
 
-export const initialSuppliers: Supplier[] = [
-  {
-    id: 's1',
-    name: 'ABC Foods & Bakery',
-    phone: '9822001122',
-    whatsapp: '9822001122',
-    products: ['Burger Buns', 'Sandwich Breads', 'Pizza Bases', 'Kulhad Cups'],
-    totalPurchases: 0,
-    pendingPayment: 0
-  },
-  {
-    id: 's2',
-    name: 'Sahyadri Fresh Dairy',
-    phone: '9423114455',
-    whatsapp: '9423114455',
-    products: ['Full Cream Milk', 'Cheese Slices', 'Paneer', 'Liquid Cheese', 'Butter'],
-    totalPurchases: 0,
-    pendingPayment: 0
-  },
-  {
-    id: 's3',
-    name: 'Spice Craft & Groceries',
-    phone: '9765338899',
-    whatsapp: '9765338899',
-    products: ['Maggie Packs', 'Syrups', 'Peri Peri Spice', 'Sauces', 'Mayonnaise', 'Penne Pasta'],
-    totalPurchases: 0,
-    pendingPayment: 0
-  }
-];
+export const initialSuppliers: Supplier[] = [];
 
 export const initialPurchases: Purchase[] = [];
 
@@ -945,53 +917,7 @@ export const initialTables: TableItem[] = [
 
 export const initialKitchenOrders: KitchenOrder[] = [];
 
-export const initialStaffMembers: StaffMember[] = [
-  {
-    id: 'st-1',
-    name: 'Santosh Y. Sawant',
-    role: 'Owner',
-    phone: '9822334455',
-    status: 'active',
-    permissions: {
-      canCreateBills: true,
-      canEditPrices: true,
-      canManageStock: true,
-      canViewReports: true,
-      canManageExpenses: true,
-      canManageCustomers: true
-    }
-  },
-  {
-    id: 'st-2',
-    name: 'Pravin Shinde',
-    role: 'Cashier',
-    phone: '9421887766',
-    status: 'active',
-    permissions: {
-      canCreateBills: true,
-      canEditPrices: false,
-      canManageStock: false,
-      canViewReports: false,
-      canManageExpenses: false,
-      canManageCustomers: true
-    }
-  },
-  {
-    id: 'st-3',
-    name: 'Ganesh Jadhav',
-    role: 'Manager',
-    phone: '9765112233',
-    status: 'active',
-    permissions: {
-      canCreateBills: true,
-      canEditPrices: false,
-      canManageStock: true,
-      canViewReports: true,
-      canManageExpenses: true,
-      canManageCustomers: true
-    }
-  }
-];
+export const initialStaffMembers: StaffMember[] = [];
 
 export const initialBusinessProfile: BusinessProfile = {
   name: 'SYS Cafe',
