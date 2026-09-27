@@ -32,7 +32,6 @@ export const ReportsScreen: React.FC = () => {
   const paymentBreakdown = {
     cash: nonRefundedBills.filter(b => b.paymentMethod === 'cash').reduce((s, b) => s + b.total, 0),
     upi: nonRefundedBills.filter(b => b.paymentMethod === 'upi').reduce((s, b) => s + b.total, 0),
-    card: nonRefundedBills.filter(b => b.paymentMethod === 'card').reduce((s, b) => s + b.total, 0),
     udhaar: nonRefundedBills.filter(b => b.paymentMethod === 'udhaar').reduce((s, b) => s + b.total, 0)
   };
 
@@ -164,7 +163,6 @@ export const ReportsScreen: React.FC = () => {
             {[
               { label: 'Cash Payments', val: paymentBreakdown.cash, color: 'bg-emerald-500', barColor: '#10b981' },
               { label: 'UPI / QR Payments', val: paymentBreakdown.upi, color: 'bg-purple-500', barColor: '#a855f7' },
-              { label: 'Card Payments', val: paymentBreakdown.card, color: 'bg-blue-500', barColor: '#3b82f6' },
               { label: 'Customer Udhaar', val: paymentBreakdown.udhaar, color: 'bg-amber-500', barColor: '#f59e0b' }
             ].map(item => {
               const pct = totalRevenue > 0 ? ((item.val / totalRevenue) * 100).toFixed(1) : '0';

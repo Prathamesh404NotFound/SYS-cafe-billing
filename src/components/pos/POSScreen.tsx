@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Plus,
   Minus,
   Trash2,
   AlertCircle,
-  CreditCard,
   Banknote,
   QrCode,
   UserCheck,
@@ -17,11 +16,17 @@ import {
   Layers,
   ShoppingCart,
   ArrowLeft,
-  X
+  X,
+  Copy,
+  Download,
+  ExternalLink,
+  Utensils
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { MenuItem, PaymentMethod, OrderType } from '../../types';
+import { MenuItem, PaymentMethod, OrderType, TableItem } from '../../types';
 import { FoodIllustration } from '../illustrations/FoodIllustrations';
+import { generateUpiUri, generateQrDataUrl, downloadQrDataUrl } from '../../utils/qrCode';
+import { SettleBillModal } from '../tables/SettleBillModal';
 
 export const POSScreen: React.FC = () => {
   const {
@@ -49,22 +54,75 @@ export const POSScreen: React.FC = () => {
     cartNotes,
     setCartNotes,
     completeBill,
+    placeTableOrder,
+    setActiveTab,
     language,
     t,
     customers,
-    businessProfile
+    businessProfile,
+    tables
   } = useApp();
 
   const [mobilePosView, setMobilePosView] = useState<'menu' | 'cart'>('menu');
   const [localSearch, setLocalSearch] = useState('');
   const [selectedVariantItem, setSelectedVariantItem] = useState<MenuItem | null>(null);
 
+  // Dine-in workflow: Pay after dining vs Pay upfront
+  const [payUpfrontDineIn, setPayUpfrontDineIn] = useState(false);
+  const [settlingTable, setSettlingTable] = useState<TableItem | null>(null);
+
+  // Active occupied tables list & selected table info
+  const occupiedTables = tables.filter(
+    t => t.status === 'occupied' || (t.activeItems && t.activeItems.length > 0)
+  );
+  const selectedTableObj = tables.find(t => String(t.number) === String(tableNumber));
+  const isSelectedTableOccupied = selectedTableObj?.status === 'occupied';
+
   // Cash payment calculation state
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('cash');
   const [cashReceived, setCashReceived] = useState<number | ''>('');
   const [showUpiModal, setShowUpiModal] = useState(false);
+  const [upiQrDataUrl, setUpiQrDataUrl] = useState<string>('');
+  const [copiedUpi, setCopiedUpi] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Handle Send to Kitchen (Dine-in Order First -> Served to Table -> Pay After Eating)
+  const handlePlaceDineInOrder = () => {
+    if (cart.length === 0) {
+      setFormError('Please add items to cart first.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      placeTableOrder(tableNumber, cart, customerName, customerPhone, cartNotes);
+      setFormError(null);
+      setMobilePosView('menu');
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to place table order');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Generate Real UPI QR Code when modal opens or total changes
+  useEffect(() => {
+    if (showUpiModal && businessProfile.upiId) {
+      const upiUri = generateUpiUri({
+        upiId: businessProfile.upiId,
+        payeeName: businessProfile.name,
+        amount: cartTotal,
+        note: `SYS-Cafe-Order`
+      });
+      generateQrDataUrl(upiUri, {
+        width: 320,
+        margin: 2,
+        color: { dark: '#581c87', light: '#ffffff' }
+      })
+        .then(setUpiQrDataUrl)
+        .catch(err => console.error('Failed to generate POS UPI QR:', err));
+    }
+  }, [showUpiModal, cartTotal, businessProfile.upiId, businessProfile.name]);
 
   // Filter items by category & search
   const filteredItems = menuItems.filter(item => {
@@ -193,11 +251,15 @@ export const POSScreen: React.FC = () => {
               onChange={e => setTableNumber(e.target.value)}
               className="w-full bg-white border border-gray-300 rounded-lg py-1 px-1.5 text-xs font-bold text-gray-800 focus:outline-none focus:border-orange-500 cursor-pointer"
             >
-              {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-                <option key={n} value={String(n)}>
-                  T-{n}
-                </option>
-              ))}
+              {tables.length === 0 ? (
+                <option value="1">T-1</option>
+              ) : (
+                tables.map(tbl => (
+                  <option key={tbl.id} value={String(tbl.number)}>
+                    T-{tbl.number} {tbl.name && tbl.name !== `Table ${tbl.number}` ? `(${tbl.name})` : ''}
+                  </option>
+                ))
+              )}
             </select>
           </div>
         )}
@@ -231,6 +293,25 @@ export const POSScreen: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Dine-In Occupied Table Alert */}
+      {orderType === 'dine_in' && isSelectedTableOccupied && (
+        <div className="flex items-center justify-between p-2 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-950 animate-in fade-in">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
+            <span className="text-[11px] font-bold truncate">
+              Table {tableNumber} is Dining (₹{selectedTableObj?.orderTotal || 0}) • New dishes append to order
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSettlingTable(selectedTableObj || null)}
+            className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-[10px] rounded-md shrink-0 cursor-pointer shadow-xs ml-1"
+          >
+            Settle Bill
+          </button>
+        </div>
+      )}
     </div>
   );
 
@@ -391,147 +472,241 @@ export const POSScreen: React.FC = () => {
   );
 
   // Sub-renderer for Payment Method Selector & Cash Tender
-  const renderPaymentMethods = () => (
-    <div className="bg-white rounded-xl border border-gray-200/90 p-3 space-y-2 shadow-2xs">
-      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-        {t('selectPayment')}
-      </label>
-      <div className="grid grid-cols-4 gap-1.5">
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedPayment('cash');
-            if (formError) setFormError(null);
-          }}
-          className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
-            selectedPayment === 'cash'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'bg-slate-50 border border-gray-200 text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <Banknote className="w-4 h-4 mb-0.5" />
-          <span>Cash</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedPayment('upi');
-            setShowUpiModal(true);
-            if (formError) setFormError(null);
-          }}
-          className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
-            selectedPayment === 'upi'
-              ? 'bg-purple-600 text-white shadow-xs'
-              : 'bg-slate-50 border border-gray-200 text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <QrCode className="w-4 h-4 mb-0.5" />
-          <span>UPI / QR</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedPayment('card');
-            if (formError) setFormError(null);
-          }}
-          className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
-            selectedPayment === 'card'
-              ? 'bg-blue-600 text-white shadow-xs'
-              : 'bg-slate-50 border border-gray-200 text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <CreditCard className="w-4 h-4 mb-0.5" />
-          <span>Card</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setSelectedPayment('udhaar')}
-          className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
-            selectedPayment === 'udhaar'
-              ? 'bg-amber-600 text-white shadow-xs'
-              : 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
-          }`}
-        >
-          <UserCheck className="w-4 h-4 mb-0.5" />
-          <span>Udhaar</span>
-        </button>
-      </div>
-
-      {formError && (
-        <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-center gap-1.5 animate-in fade-in">
-          <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
-          <span>{formError}</span>
-        </div>
-      )}
-
-      {/* Cash Tender Calculator (If Cash Selected) */}
-      {selectedPayment === 'cash' && cart.length > 0 && (
-        <div className="bg-slate-50 p-2.5 rounded-xl border border-gray-200 space-y-2 mt-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-bold text-gray-600">Tender Received:</span>
-            <input
-              type="number"
-              placeholder={`₹${cartTotal}`}
-              value={cashReceived}
-              onChange={e => setCashReceived(e.target.value ? Number(e.target.value) : '')}
-              className="w-24 bg-white border border-gray-300 rounded-lg px-2.5 py-1 text-xs font-bold text-right text-gray-900 focus:outline-none focus:border-orange-500"
-            />
+  const renderPaymentMethods = () => {
+    // If Dine-in and customer is paying after eating (standard cafe flow)
+    if (orderType === 'dine_in' && !payUpfrontDineIn) {
+      return (
+        <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 space-y-2 shadow-2xs">
+          <div className="flex items-center gap-2 font-black text-amber-900">
+            <Utensils className="w-4 h-4 text-orange-600 shrink-0" />
+            <span>Dine-In Order: Pay After Eating</span>
           </div>
+          <p className="text-[11px] text-amber-800 leading-relaxed">
+            Dishes will be sent to the kitchen first and served to <strong>Table {tableNumber}</strong>. Customers will enjoy their meal and pay when requesting the bill.
+          </p>
 
-          {/* Quick Cash Suggestions */}
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
-            {quickCashOptions.map(opt => (
+          {isSelectedTableOccupied && (
+            <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-amber-900">
+                Running Bill: ₹{selectedTableObj?.orderTotal || 0}
+              </span>
               <button
-                key={opt.label}
                 type="button"
-                onClick={() => setCashReceived(opt.value)}
-                className="px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-gray-700 hover:bg-gray-100 whitespace-nowrap transition-colors cursor-pointer"
+                onClick={() => setSettlingTable(selectedTableObj || null)}
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-black text-[10px] rounded-lg shadow-2xs cursor-pointer"
               >
-                {opt.label}
+                Settle & Free Table
               </button>
-            ))}
-          </div>
+            </div>
+          )}
 
-          {/* Change calculation */}
-          {typeof cashReceived === 'number' && cashReceived >= cartTotal && (
-            <div className="flex justify-between text-xs font-black text-emerald-700 pt-0.5 border-t border-emerald-100">
-              <span>Return Change:</span>
-              <span>₹{cashChange}</span>
+          {formError && (
+            <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-center gap-1.5 animate-in fade-in">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+              <span>{formError}</span>
             </div>
           )}
         </div>
-      )}
-    </div>
-  );
+      );
+    }
 
-  // Sub-renderer for Action CTAs (Clear Cart & Complete Bill)
-  const renderActionButtons = () => (
-    <div className="flex items-center gap-2 w-full">
-      <button
-        type="button"
-        onClick={clearCart}
-        disabled={cart.length === 0}
-        className="px-3 py-3 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold rounded-xl text-xs flex items-center justify-center transition-colors cursor-pointer shrink-0"
-        title="Clear Cart"
-      >
-        <RotateCcw className="w-4 h-4" />
-      </button>
+    return (
+      <div className="bg-white rounded-xl border border-gray-200/90 p-3 space-y-2 shadow-2xs">
+        <div className="flex items-center justify-between">
+          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+            {t('selectPayment')}
+          </label>
+          {orderType === 'dine_in' && payUpfrontDineIn && (
+            <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
+              Upfront Pay Mode
+            </span>
+          )}
+        </div>
 
-      <button
-        type="button"
-        id="btn-complete-bill"
-        onClick={handleCompleteBill}
-        disabled={cart.length === 0 || isSubmitting}
-        className="flex-1 py-3 px-4 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 disabled:opacity-40 text-white font-black rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-      >
-        <Check className="w-4 h-4 stroke-[3]" />
-        <span>{t('completeBill')} • ₹{cartTotal}</span>
-      </button>
-    </div>
-  );
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedPayment('cash');
+              if (formError) setFormError(null);
+            }}
+            className={`py-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
+              selectedPayment === 'cash'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-50 border border-gray-200 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <Banknote className="w-4 h-4 mb-0.5" />
+            <span>Cash</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedPayment('upi');
+              setShowUpiModal(true);
+              if (formError) setFormError(null);
+            }}
+            className={`py-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
+              selectedPayment === 'upi'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'bg-slate-50 border border-gray-200 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <QrCode className="w-4 h-4 mb-0.5" />
+            <span>UPI / QR</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedPayment('udhaar')}
+            className={`py-2.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center transition-all cursor-pointer ${
+              selectedPayment === 'udhaar'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100'
+            }`}
+          >
+            <UserCheck className="w-4 h-4 mb-0.5" />
+            <span>Udhaar</span>
+          </button>
+        </div>
+
+        {formError && (
+          <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-bold flex items-center gap-1.5 animate-in fade-in">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>{formError}</span>
+          </div>
+        )}
+
+        {/* Cash Tender Calculator (If Cash Selected) */}
+        {selectedPayment === 'cash' && cart.length > 0 && (
+          <div className="bg-slate-50 p-2.5 rounded-xl border border-gray-200 space-y-2 mt-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-gray-600">Tender Received:</span>
+              <input
+                type="number"
+                placeholder={`₹${cartTotal}`}
+                value={cashReceived}
+                onChange={e => setCashReceived(e.target.value ? Number(e.target.value) : '')}
+                className="w-24 bg-white border border-gray-300 rounded-lg px-2.5 py-1 text-xs font-bold text-right text-gray-900 focus:outline-none focus:border-orange-500"
+              />
+            </div>
+
+            {/* Quick Cash Suggestions */}
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+              {quickCashOptions.map(opt => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => setCashReceived(opt.value)}
+                  className="px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-[10px] font-bold text-gray-700 hover:bg-gray-100 whitespace-nowrap transition-colors cursor-pointer"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Change calculation */}
+            {typeof cashReceived === 'number' && cashReceived >= cartTotal && (
+              <div className="flex justify-between text-xs font-black text-emerald-700 pt-0.5 border-t border-emerald-100">
+                <span>Return Change:</span>
+                <span>₹{cashChange}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Sub-renderer for Action CTAs (Clear Cart & Order / Complete Bill)
+  const renderActionButtons = () => {
+    // Standard Cafe Dine-In Flow: Order first -> served -> pay after eating
+    if (orderType === 'dine_in' && !payUpfrontDineIn) {
+      return (
+        <div className="flex flex-col gap-2 w-full">
+          <div className="flex items-center gap-2 w-full">
+            <button
+              type="button"
+              onClick={clearCart}
+              disabled={cart.length === 0}
+              className="px-3 py-3 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold rounded-xl text-xs flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              title="Clear Cart"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              id="btn-place-table-order"
+              onClick={handlePlaceDineInOrder}
+              disabled={cart.length === 0 || isSubmitting}
+              className="flex-1 py-3 px-4 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 disabled:opacity-40 text-white font-black rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Utensils className="w-4 h-4" />
+              <span>
+                {isSelectedTableOccupied
+                  ? `Add to Table ${tableNumber} & Send KOT`
+                  : `Send Order to Kitchen (Pay Later)`}{' '}
+                • ₹{cartTotal}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between px-1 text-[11px] text-gray-500">
+            <span>Diners pay bill after eating.</span>
+            <button
+              type="button"
+              onClick={() => setPayUpfrontDineIn(true)}
+              className="text-orange-600 font-bold hover:underline cursor-pointer"
+            >
+              Customer wants to pay now upfront?
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Direct / Upfront Payment Flow (Takeaway, Delivery, or explicit upfront dine-in)
+    return (
+      <div className="flex flex-col gap-1.5 w-full">
+        <div className="flex items-center gap-2 w-full">
+          <button
+            type="button"
+            onClick={clearCart}
+            disabled={cart.length === 0}
+            className="px-3 py-3 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 font-bold rounded-xl text-xs flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            title="Clear Cart"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            id="btn-complete-bill"
+            onClick={handleCompleteBill}
+            disabled={cart.length === 0 || isSubmitting}
+            className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-40 text-white font-black rounded-xl text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Check className="w-4 h-4 stroke-[3]" />
+            <span>Complete & Pay • ₹{cartTotal}</span>
+          </button>
+        </div>
+
+        {orderType === 'dine_in' && payUpfrontDineIn && (
+          <div className="text-right px-1">
+            <button
+              type="button"
+              onClick={() => setPayUpfrontDineIn(false)}
+              className="text-[11px] text-orange-600 font-bold hover:underline cursor-pointer"
+            >
+              ← Back to Pay After Eating Flow
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row h-full min-h-0 min-w-0 overflow-hidden bg-slate-100 relative">
@@ -580,6 +755,61 @@ export const POSScreen: React.FC = () => {
           mobilePosView === 'menu' ? 'flex' : 'hidden lg:flex'
         }`}
       >
+        {/* Active Dining Tables (Eating / Pay After Dining) Quick Strip */}
+        {occupiedTables.length > 0 && (
+          <div className="px-3 py-2 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200/90 shrink-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-black text-amber-950 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Tables Eating ({occupiedTables.length})</span>
+                <span className="text-[10px] font-normal text-amber-700 hidden sm:inline">
+                  — Food Served • Pay When Done
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('tables')}
+                className="text-[10px] font-bold text-orange-700 hover:text-orange-900 hover:underline flex items-center gap-0.5 cursor-pointer"
+              >
+                <span>Table Map</span>
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-0.5 no-scrollbar">
+              {occupiedTables.map(tbl => (
+                <div
+                  key={tbl.id}
+                  className="flex items-center gap-1.5 bg-white border border-amber-300 rounded-xl px-2.5 py-1 shadow-2xs shrink-0 text-xs"
+                >
+                  <span className="font-black text-gray-900">T-{tbl.number}</span>
+                  <span className="font-extrabold text-orange-600 font-mono">₹{tbl.orderTotal || 0}</span>
+                  <div className="flex items-center gap-1 border-l border-gray-200 pl-1.5 ml-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderType('dine_in');
+                        setTableNumber(String(tbl.number));
+                      }}
+                      className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-gray-700 cursor-pointer"
+                      title="Add more dishes to this table"
+                    >
+                      + Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettlingTable(tbl)}
+                      className="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-2xs"
+                      title="Collect payment & free table after eating"
+                    >
+                      Settle & Pay
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Search & Category Filter Bar */}
         <div className="p-2.5 sm:p-3 bg-white border-b border-gray-200 shrink-0 space-y-2">
           {/* Quick Item Search */}
@@ -832,8 +1062,8 @@ export const POSScreen: React.FC = () => {
             {renderPaymentMethods()}
           </div>
 
-          {/* Mobile Pinned Bottom Checkout Bar (Above mobile nav, completely visible, no pb-20) */}
-          <div className="p-3 bg-white border-t border-gray-200 shrink-0 shadow-lg flex items-center gap-2">
+          {/* Mobile Pinned Bottom Checkout Bar (Clear of fixed bottom navigation bar) */}
+          <div className="p-3 pb-20 bg-white border-t border-gray-200 shrink-0 shadow-lg flex items-center gap-2">
             {renderActionButtons()}
           </div>
         </div>
@@ -901,40 +1131,127 @@ export const POSScreen: React.FC = () => {
         </div>
       )}
 
-      {/* UPI QR CODE POPUP MODAL */}
+      {/* REAL DYNAMIC UPI QR CODE POPUP MODAL */}
       {showUpiModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xs w-full p-5 shadow-2xl text-center border border-gray-200">
-            <h3 className="font-extrabold text-base text-gray-900">SYS Cafe UPI Payment</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Scan to pay directly to cafe account</p>
-
-            {/* Simulated UPI QR Box */}
-            <div className="my-4 p-4 bg-purple-50 rounded-xl border-2 border-dashed border-purple-300 flex flex-col items-center justify-center">
-              <QrCode className="w-32 h-32 text-purple-700" />
-              <div className="mt-2 text-xs font-mono font-bold text-purple-900">
-                {businessProfile.upiId}
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl text-center border border-gray-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div className="text-left">
+                <h3 className="font-extrabold text-base text-gray-900 leading-tight">
+                  UPI Instant Payment
+                </h3>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  Scan with GPay, PhonePe, Paytm or BHIM
+                </p>
               </div>
-              <div className="text-xs font-extrabold text-gray-900 mt-1">
-                Amount: ₹{cartTotal}
+              <button
+                type="button"
+                onClick={() => setShowUpiModal(false)}
+                className="p-1.5 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Total Amount Tag */}
+            <div className="my-3 py-2 bg-purple-50 rounded-2xl border border-purple-200 flex items-center justify-between px-4">
+              <span className="text-xs font-bold text-purple-900">Total Payable:</span>
+              <span className="text-xl font-black text-purple-700">₹{cartTotal}</span>
+            </div>
+
+            {/* Authentic Scannable QR Code Image */}
+            <div className="p-3 bg-white rounded-2xl border-2 border-purple-500 shadow-md relative group flex flex-col items-center justify-center my-2">
+              {upiQrDataUrl ? (
+                <img
+                  src={upiQrDataUrl}
+                  alt="UPI Payment QR Code"
+                  className="w-48 h-48 object-contain rounded-xl"
+                />
+              ) : (
+                <div className="w-48 h-48 flex items-center justify-center bg-slate-50 text-xs text-gray-400">
+                  Generating UPI QR...
+                </div>
+              )}
+
+              {/* UPI ID + Copy */}
+              <div className="mt-2.5 flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-xl">
+                <span className="text-xs font-mono font-bold text-gray-800">
+                  {businessProfile.upiId}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(businessProfile.upiId);
+                    setCopiedUpi(true);
+                    setTimeout(() => setCopiedUpi(false), 2000);
+                  }}
+                  className="p-1 rounded-lg hover:bg-white text-gray-500 hover:text-purple-600 transition-colors cursor-pointer"
+                  title="Copy UPI ID"
+                >
+                  {copiedUpi ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                </button>
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowUpiModal(false)}
-                className="flex-1 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl text-xs"
+            {/* Action Buttons */}
+            <div className="mt-3 space-y-2">
+              {/* Pay via UPI App (Mobile deep link) */}
+              <a
+                href={generateUpiUri({
+                  upiId: businessProfile.upiId,
+                  payeeName: businessProfile.name,
+                  amount: cartTotal,
+                  note: 'SYS Cafe Bill'
+                })}
+                className="w-full py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors"
               >
-                Done
-              </button>
-              <button
-                onClick={() => setShowUpiModal(false)}
-                className="px-3 py-2 bg-gray-100 text-gray-700 font-bold rounded-xl text-xs"
-              >
-                Close
-              </button>
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Open in UPI App (Mobile)</span>
+              </a>
+
+              <div className="flex gap-2">
+                {upiQrDataUrl && (
+                  <button
+                    type="button"
+                    onClick={() => downloadQrDataUrl(upiQrDataUrl, `sys-cafe-bill-qr-${cartTotal}`)}
+                    className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                    title="Download QR image"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUpiModal(false);
+                    setSelectedPayment('upi');
+                    handleCompleteBill();
+                  }}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs shadow-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Mark as Paid & Generate Bill</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Settle Bill & Free Table Modal (Allows settling directly from POS screen after dining) */}
+      {settlingTable && (
+        <SettleBillModal
+          table={settlingTable}
+          isOpen={settlingTable !== null}
+          onClose={() => setSettlingTable(null)}
+        />
       )}
     </div>
   );

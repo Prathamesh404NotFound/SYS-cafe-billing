@@ -8,7 +8,11 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Menu
+  Menu,
+  Cloud,
+  CloudOff,
+  RefreshCw,
+  UtensilsCrossed
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Language } from '../../types';
@@ -24,12 +28,18 @@ export const Header: React.FC = () => {
     setGlobalSearch,
     notifications,
     dismissNotification,
-    cashRegister
+    cashRegister,
+    firebaseConnected,
+    firebaseSyncing,
+    manualSyncToCloud,
+    customerCalls,
+    dismissCustomerCall
   } = useApp();
 
   const [showNotifications, setShowNotifications] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const [showCloudDetails, setShowCloudDetails] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Keyboard shortcut '/' to focus search, 'n' to new bill
@@ -133,6 +143,73 @@ export const Header: React.FC = () => {
           >
             <Search className="w-4 h-4" />
           </button>
+
+          {/* Active Table Calls from QR */}
+          {customerCalls.length > 0 && (
+            <button
+              onClick={() => setActiveTab('tables')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-black text-xs animate-bounce shadow-xs cursor-pointer"
+              title="Customer called waiter from Table QR stand"
+            >
+              <UtensilsCrossed className="w-3.5 h-3.5" />
+              <span>{customerCalls.length} Table Call{customerCalls.length > 1 ? 's' : ''}</span>
+            </button>
+          )}
+
+          {/* Firebase Realtime Database Status Pill */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowCloudDetails(!showCloudDetails)}
+              className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-xs font-bold transition-colors cursor-pointer"
+              title="Firebase Realtime Database Status"
+            >
+              {firebaseConnected ? (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              ) : (
+                <span className="h-2 w-2 rounded-full bg-amber-400"></span>
+              )}
+              <Cloud className={`w-3.5 h-3.5 ${firebaseConnected ? 'text-emerald-600' : 'text-amber-500'}`} />
+              <span className="text-[11px] text-gray-700">
+                {firebaseSyncing ? 'Syncing...' : firebaseConnected ? 'Cloud Live' : 'Connecting'}
+              </span>
+            </button>
+
+            {showCloudDetails && (
+              <div className="absolute right-0 mt-1.5 w-64 bg-white rounded-2xl border border-gray-200 shadow-xl p-3.5 z-50 text-xs space-y-2.5">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+                  <span className="font-extrabold text-gray-900">Firebase Realtime DB</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                      firebaseConnected
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}
+                  >
+                    {firebaseConnected ? 'Connected' : 'Connecting'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-gray-600 space-y-1 font-mono break-all">
+                  <div>Project: <strong className="text-gray-900 font-sans">sys-cafe</strong></div>
+                  <div>URL: sys-cafe-default-rtdb.firebaseio.com</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    manualSyncToCloud();
+                    setShowCloudDetails(false);
+                  }}
+                  className="w-full py-1.5 bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Sync Everything Now</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Quick New Bill CTA */}
           <button

@@ -140,7 +140,7 @@ export const KitchenScreen: React.FC = () => {
 
               {/* Status Action Buttons */}
               <div className="pt-3 border-t border-gray-100 flex gap-2">
-                {order.status === 'pending' && (
+                {(order.status === 'new' || order.status === 'pending') && (
                   <button
                     onClick={() => updateKitchenOrderStatus(order.id, 'preparing')}
                     className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs shadow-sm transition-colors cursor-pointer"
@@ -164,7 +164,7 @@ export const KitchenScreen: React.FC = () => {
                     className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Delivered to Customer</span>
+                    <span>Serve to Table</span>
                   </button>
                 )}
               </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   Store,
@@ -10,10 +10,16 @@ import {
   Upload,
   RotateCcw,
   CheckCircle2,
-  FileText
+  FileText,
+  Cloud,
+  RefreshCw,
+  Copy,
+  Check,
+  ExternalLink
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Language } from '../../types';
+import { generateUpiUri, generateQrDataUrl, downloadQrDataUrl } from '../../utils/qrCode';
 
 export const SettingsScreen: React.FC = () => {
   const {
@@ -22,10 +28,16 @@ export const SettingsScreen: React.FC = () => {
     language,
     setLanguage,
     resetToDefaultData,
+    firebaseConnected,
+    firebaseSyncing,
+    lastSyncTime,
+    manualSyncToCloud,
     t
   } = useApp();
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [upiPreviewQr, setUpiPreviewQr] = useState<string>('');
+  const [copiedSettingUpi, setCopiedSettingUpi] = useState(false);
 
   // Form states initialized with businessProfile
   const [name, setName] = useState(businessProfile.name);
@@ -39,6 +51,24 @@ export const SettingsScreen: React.FC = () => {
   const [enableGst, setEnableGst] = useState(businessProfile.enableGst);
   const [defaultGstRate, setDefaultGstRate] = useState(businessProfile.defaultGstRate);
   const [soundEnabled, setSoundEnabled] = useState(businessProfile.soundEnabled);
+
+  // Generate Live UPI QR Preview in Settings
+  useEffect(() => {
+    if (upiId) {
+      const uri = generateUpiUri({
+        upiId,
+        payeeName: name || 'SYS Cafe',
+        note: 'SYS Cafe Counter Payment'
+      });
+      generateQrDataUrl(uri, {
+        width: 240,
+        margin: 2,
+        color: { dark: '#581c87', light: '#ffffff' }
+      })
+        .then(setUpiPreviewQr)
+        .catch(err => console.error('Failed to generate setting UPI QR:', err));
+    }
+  }, [upiId, name]);
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,42 +198,160 @@ export const SettingsScreen: React.FC = () => {
               <h3 className="font-extrabold text-sm text-gray-900">UPI Payment & QR Codes</h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">UPI ID (VPA)</label>
-                <input
-                  type="text"
-                  value={upiId}
-                  onChange={e => setUpiId(e.target.value)}
-                  placeholder="syscafe@okaxis"
-                  className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono font-bold"
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">UPI ID (VPA)</label>
+                  <input
+                    type="text"
+                    value={upiId}
+                    onChange={e => setUpiId(e.target.value)}
+                    placeholder="syscafe@okaxis"
+                    className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono font-bold"
+                  />
+                  <span className="text-[10px] text-gray-400 mt-0.5 block">
+                    Used to generate dynamic payment QR codes on receipts & POS
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">FSSAI License No.</label>
+                  <input
+                    type="text"
+                    value={fssai}
+                    onChange={e => setFssai(e.target.value)}
+                    placeholder="14-digit FSSAI Number"
+                    className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Receipt Footer Note</label>
+                  <input
+                    type="text"
+                    value={receiptFooter}
+                    onChange={e => setReceiptFooter(e.target.value)}
+                    placeholder="Thank you for visiting SYS Cafe! Please come again."
+                    className="w-full border border-gray-300 rounded-lg p-2 text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Live QR Stand Preview Card */}
+              <div className="bg-purple-50/60 border border-purple-200 rounded-2xl p-4 flex flex-col items-center justify-center text-center">
+                <span className="text-[10px] font-black uppercase text-purple-900 tracking-wider">
+                  Live Master UPI QR
+                </span>
+
+                <div className="p-2 bg-white rounded-xl border border-purple-200 shadow-xs my-2">
+                  {upiPreviewQr ? (
+                    <img
+                      src={upiPreviewQr}
+                      alt="Cafe Master UPI QR"
+                      className="w-32 h-32 object-contain rounded-lg"
+                    />
+                  ) : (
+                    <div className="w-32 h-32 flex items-center justify-center text-xs text-gray-400">
+                      Enter UPI ID
+                    </div>
+                  )}
+                </div>
+
+                <span className="text-[11px] font-mono font-bold text-purple-950 mb-2 truncate max-w-full">
+                  {upiId || 'No UPI ID set'}
+                </span>
+
+                <div className="flex gap-1.5 w-full">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(upiId);
+                      setCopiedSettingUpi(true);
+                      setTimeout(() => setCopiedSettingUpi(false), 2000);
+                    }}
+                    className="flex-1 py-1.5 bg-white hover:bg-purple-100 text-purple-800 border border-purple-300 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    {copiedSettingUpi ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedSettingUpi ? 'Copied' : 'Copy'}</span>
+                  </button>
+
+                  {upiPreviewQr && (
+                    <button
+                      type="button"
+                      onClick={() => downloadQrDataUrl(upiPreviewQr, `sys-cafe-master-upi-qr`)}
+                      className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Firebase Realtime Database Status Card */}
+          <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-orange-500" />
+                <h3 className="font-extrabold text-sm text-gray-900">
+                  Firebase Realtime Database Cloud Sync
+                </h3>
+              </div>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${
+                  firebaseConnected
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    firebaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+                  }`}
                 />
-                <span className="text-[10px] text-gray-400 mt-0.5 block">
-                  Used to generate dynamic payment QR codes on receipts
+                <span>{firebaseConnected ? 'Connected & Live' : 'Connecting to Cloud'}</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-slate-50 p-3.5 rounded-xl border border-gray-200 font-mono">
+              <div>
+                <span className="text-[10px] text-gray-500 uppercase font-sans font-bold block">
+                  Project ID
+                </span>
+                <span className="font-bold text-gray-900">sys-cafe</span>
+              </div>
+              <div className="sm:col-span-2">
+                <span className="text-[10px] text-gray-500 uppercase font-sans font-bold block">
+                  Database URL
+                </span>
+                <span className="font-bold text-gray-900 break-all">
+                  https://sys-cafe-default-rtdb.firebaseio.com
                 </span>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">FSSAI License No.</label>
-                <input
-                  type="text"
-                  value={fssai}
-                  onChange={e => setFssai(e.target.value)}
-                  placeholder="14-digit FSSAI Number"
-                  className="w-full border border-gray-300 rounded-lg p-2 text-xs font-mono"
-                />
-              </div>
+            <p className="text-[11px] text-gray-500">
+              Every table order, kitchen ticket, bill, menu change, and cash register transaction synchronizes in real time across all staff devices, kitchen screens, and customer table stands.
+            </p>
 
-              <div className="sm:col-span-2">
-                <label className="block text-xs font-bold text-gray-600 mb-1">Receipt Footer Note</label>
-                <input
-                  type="text"
-                  value={receiptFooter}
-                  onChange={e => setReceiptFooter(e.target.value)}
-                  placeholder="Thank you for visiting SYS Cafe! Please come again."
-                  className="w-full border border-gray-300 rounded-lg p-2 text-xs"
-                />
-              </div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={manualSyncToCloud}
+                disabled={firebaseSyncing}
+                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${firebaseSyncing ? 'animate-spin' : ''}`} />
+                <span>{firebaseSyncing ? 'Synchronizing...' : 'Sync Everything to Cloud Now'}</span>
+              </button>
+
+              {lastSyncTime && (
+                <span className="text-[11px] text-gray-500 font-medium">
+                  Last cloud sync: {lastSyncTime.toLocaleTimeString()}
+                </span>
+              )}
             </div>
           </div>
 

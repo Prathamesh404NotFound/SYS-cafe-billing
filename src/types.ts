@@ -214,13 +214,16 @@ export interface TableItem {
   tableNumber?: number;
   name: string;
   capacity?: number;
+  floor?: string;
   status: 'available' | 'occupied' | 'bill_pending' | 'vacant' | 'billed';
   currentBillId?: string;
   currentBillAmount?: number;
   customerName?: string;
+  customerPhone?: string;
   orderTotal?: number;
   seatedAt?: string;
   itemsCount?: number;
+  activeItems?: CartItem[];
 }
 
 export type CafeTable = TableItem;
@@ -273,4 +276,13 @@ export interface BusinessProfile {
   defaultGstRate?: number;
   soundEnabled?: boolean;
   upiId: string;
+}
+
+export interface CustomerCall {
+  id: string;
+  tableNumber: string | number;
+  type: 'waiter' | 'bill' | 'water' | 'other';
+  message: string;
+  timestamp: string;
+  status: 'pending' | 'resolved';
 }

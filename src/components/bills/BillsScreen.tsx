@@ -164,7 +164,6 @@ export const BillsScreen: React.FC = () => {
               <option value="all">All Payment Methods</option>
               <option value="cash">Cash Only</option>
               <option value="upi">UPI / Online</option>
-              <option value="card">Card</option>
               <option value="udhaar">Udhaar (Credit)</option>
             </select>
 

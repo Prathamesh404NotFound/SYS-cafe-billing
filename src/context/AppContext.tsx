@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   Language,
   ActiveTab,
@@ -18,7 +18,8 @@ import {
   BusinessProfile,
   OrderType,
   PaymentMethod,
-  KitchenStatus
+  KitchenStatus,
+  CustomerCall
 } from '../types';
 import {
   initialCategories,
@@ -36,6 +37,12 @@ import {
   initialBusinessProfile
 } from '../data/initialData';
 import { translations, getTranslation } from '../i18n/translations';
+import {
+  subscribeConnectionStatus,
+  subscribeRtdb,
+  writeToRtdb,
+  RTDB_PATHS
+} from '../services/firebase';
 
 interface NotificationItem {
   id: string;
@@ -57,6 +64,16 @@ interface AppContextType {
   t: (key: keyof typeof translations.en) => string;
   globalSearch: string;
   setGlobalSearch: (s: string) => void;
+
+  // Firebase Realtime DB Sync
+  firebaseConnected: boolean;
+  firebaseSyncing: boolean;
+  lastSyncTime: Date | null;
+  manualSyncToCloud: () => Promise<void>;
+
+  // Customer Calls (From Table QR codes)
+  customerCalls: CustomerCall[];
+  dismissCustomerCall: (id: string) => void;
 
   // Menu & Categories
   categories: Category[];
@@ -92,6 +109,21 @@ interface AppContextType {
   bills: Bill[];
   completeBill: (
     paymentMethod: PaymentMethod,
+    cashReceived?: number,
+    cashChange?: number,
+    notes?: string
+  ) => Bill;
+  placeTableOrder: (
+    tableNumber: string | number,
+    itemsToOrder?: CartItem[],
+    guestName?: string,
+    guestPhone?: string,
+    notes?: string
+  ) => KitchenOrder;
+  settleTableBill: (
+    tableNumber: string | number,
+    paymentMethod: PaymentMethod,
+    billDiscount?: number,
     cashReceived?: number,
     cashChange?: number,
     notes?: string
@@ -133,6 +165,9 @@ interface AppContextType {
   // Tables & Kitchen
   tables: TableItem[];
   setSelectedTable: (tbl: string | number | null) => void;
+  addTable: (tableData: { number: number; name: string; capacity?: number; floor?: string }) => { success: boolean; error?: string };
+  updateTable: (tableId: string, tableData: Partial<TableItem>) => { success: boolean; error?: string };
+  deleteTable: (tableId: string) => { success: boolean; error?: string };
   updateTableStatus: (tableId: string, status: TableItem['status'], customerName?: string, orderTotal?: number) => void;
   kitchenOrders: KitchenOrder[];
   updateKitchenStatus: (orderId: string, status: KitchenStatus) => void;
@@ -227,20 +262,331 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  // Sync to localStorage
+  // Firebase Realtime State
+  const [firebaseConnected, setFirebaseConnected] = useState<boolean>(false);
+  const [firebaseSyncing, setFirebaseSyncing] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [customerCalls, setCustomerCalls] = useState<CustomerCall[]>([]);
+
+  // Flags to prevent echo writes between local state and RTDB
+  const isRemoteUpdateRef = useRef<Record<string, boolean>>({});
+
+  // 1. Subscribe to Firebase connection state (.info/connected)
+  useEffect(() => {
+    const unsub = subscribeConnectionStatus(connected => {
+      setFirebaseConnected(connected);
+    });
+    return () => unsub();
+  }, []);
+
+  // 2. Subscribe to Firebase RTDB nodes on mount
+  useEffect(() => {
+    setFirebaseSyncing(true);
+
+    const unsubMenu = subscribeRtdb<MenuItem[]>(RTDB_PATHS.MENU_ITEMS, data => {
+      if (data && Array.isArray(data) && data.length > 0) {
+        isRemoteUpdateRef.current['menu'] = true;
+        setMenuItems(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.MENU_ITEMS, menuItems);
+      }
+    });
+
+    const unsubBills = subscribeRtdb<Bill[]>(RTDB_PATHS.BILLS, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['bills'] = true;
+        setBills(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.BILLS, bills);
+      }
+    });
+
+    const unsubTables = subscribeRtdb<TableItem[]>(RTDB_PATHS.TABLES, data => {
+      if (data && Array.isArray(data) && data.length > 0) {
+        isRemoteUpdateRef.current['tables'] = true;
+        setTables(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.TABLES, tables);
+      }
+    });
+
+    const unsubKitchen = subscribeRtdb<KitchenOrder[]>(RTDB_PATHS.KITCHEN_ORDERS, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['kitchen'] = true;
+        setKitchenOrders(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.KITCHEN_ORDERS, kitchenOrders);
+      }
+    });
+
+    const unsubCustomers = subscribeRtdb<Customer[]>(RTDB_PATHS.CUSTOMERS, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['customers'] = true;
+        setCustomers(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.CUSTOMERS, customers);
+      }
+    });
+
+    const unsubUdhaar = subscribeRtdb<UdhaarTransaction[]>(RTDB_PATHS.UDHAAR, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['udhaar'] = true;
+        setUdhaarTransactions(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.UDHAAR, udhaarTransactions);
+      }
+    });
+
+    const unsubSuppliers = subscribeRtdb<Supplier[]>(RTDB_PATHS.SUPPLIERS, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['suppliers'] = true;
+        setSuppliers(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.SUPPLIERS, suppliers);
+      }
+    });
+
+    const unsubPurchases = subscribeRtdb<Purchase[]>(RTDB_PATHS.PURCHASES, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['purchases'] = true;
+        setPurchases(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.PURCHASES, purchases);
+      }
+    });
+
+    const unsubExpenses = subscribeRtdb<Expense[]>(RTDB_PATHS.EXPENSES, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['expenses'] = true;
+        setExpenses(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.EXPENSES, expenses);
+      }
+    });
+
+    const unsubCash = subscribeRtdb<CashRegister>(RTDB_PATHS.CASH_REGISTER, data => {
+      if (data && typeof data === 'object') {
+        isRemoteUpdateRef.current['cash'] = true;
+        setCashRegister(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.CASH_REGISTER, cashRegister);
+      }
+    });
+
+    const unsubStaff = subscribeRtdb<StaffMember[]>(RTDB_PATHS.STAFF, data => {
+      if (data && Array.isArray(data)) {
+        isRemoteUpdateRef.current['staff'] = true;
+        setStaff(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.STAFF, staff);
+      }
+    });
+
+    const unsubProfile = subscribeRtdb<BusinessProfile>(RTDB_PATHS.BUSINESS_PROFILE, data => {
+      if (data && typeof data === 'object') {
+        isRemoteUpdateRef.current['profile'] = true;
+        setBusinessProfile(data);
+      } else {
+        writeToRtdb(RTDB_PATHS.BUSINESS_PROFILE, businessProfile);
+      }
+    });
+
+    // Customer calls subscription (from Table QR stands)
+    const unsubCalls = subscribeRtdb<Record<string, CustomerCall>>(RTDB_PATHS.CUSTOMER_CALLS, val => {
+      if (val && typeof val === 'object') {
+        const callsArray = Object.values(val).filter(c => c && c.status === 'pending');
+        setCustomerCalls(callsArray);
+
+        // Add notification for any new pending call
+        callsArray.forEach(call => {
+          setNotifications(prev => {
+            if (prev.some(n => n.id === call.id)) return prev;
+            return [
+              {
+                id: call.id,
+                type: 'warning',
+                title: `Table ${call.tableNumber} Request`,
+                message: call.message,
+                timestamp: call.timestamp
+              },
+              ...prev
+            ];
+          });
+        });
+      }
+    });
+
+    setFirebaseSyncing(false);
+    setLastSyncTime(new Date());
+
+    return () => {
+      unsubMenu();
+      unsubBills();
+      unsubTables();
+      unsubKitchen();
+      unsubCustomers();
+      unsubUdhaar();
+      unsubSuppliers();
+      unsubPurchases();
+      unsubExpenses();
+      unsubCash();
+      unsubStaff();
+      unsubProfile();
+      unsubCalls();
+    };
+  }, []);
+
+  // 3. Sync local changes to localStorage AND Firebase Realtime Database
   useEffect(() => saveStorage('language', language), [language]);
-  useEffect(() => saveStorage('menu', menuItems), [menuItems]);
-  useEffect(() => saveStorage('bills', bills), [bills]);
-  useEffect(() => saveStorage('customers', customers), [customers]);
-  useEffect(() => saveStorage('udhaar', udhaarTransactions), [udhaarTransactions]);
-  useEffect(() => saveStorage('suppliers', suppliers), [suppliers]);
-  useEffect(() => saveStorage('purchases', purchases), [purchases]);
-  useEffect(() => saveStorage('expenses', expenses), [expenses]);
-  useEffect(() => saveStorage('cash_reg', cashRegister), [cashRegister]);
-  useEffect(() => saveStorage('tables', tables), [tables]);
-  useEffect(() => saveStorage('kitchen', kitchenOrders), [kitchenOrders]);
-  useEffect(() => saveStorage('staff', staff), [staff]);
-  useEffect(() => saveStorage('profile', businessProfile), [businessProfile]);
+
+  useEffect(() => {
+    saveStorage('menu', menuItems);
+    if (!isRemoteUpdateRef.current['menu']) {
+      writeToRtdb(RTDB_PATHS.MENU_ITEMS, menuItems);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['menu'] = false;
+  }, [menuItems]);
+
+  useEffect(() => {
+    saveStorage('bills', bills);
+    if (!isRemoteUpdateRef.current['bills']) {
+      writeToRtdb(RTDB_PATHS.BILLS, bills);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['bills'] = false;
+  }, [bills]);
+
+  useEffect(() => {
+    saveStorage('customers', customers);
+    if (!isRemoteUpdateRef.current['customers']) {
+      writeToRtdb(RTDB_PATHS.CUSTOMERS, customers);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['customers'] = false;
+  }, [customers]);
+
+  useEffect(() => {
+    saveStorage('udhaar', udhaarTransactions);
+    if (!isRemoteUpdateRef.current['udhaar']) {
+      writeToRtdb(RTDB_PATHS.UDHAAR, udhaarTransactions);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['udhaar'] = false;
+  }, [udhaarTransactions]);
+
+  useEffect(() => {
+    saveStorage('suppliers', suppliers);
+    if (!isRemoteUpdateRef.current['suppliers']) {
+      writeToRtdb(RTDB_PATHS.SUPPLIERS, suppliers);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['suppliers'] = false;
+  }, [suppliers]);
+
+  useEffect(() => {
+    saveStorage('purchases', purchases);
+    if (!isRemoteUpdateRef.current['purchases']) {
+      writeToRtdb(RTDB_PATHS.PURCHASES, purchases);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['purchases'] = false;
+  }, [purchases]);
+
+  useEffect(() => {
+    saveStorage('expenses', expenses);
+    if (!isRemoteUpdateRef.current['expenses']) {
+      writeToRtdb(RTDB_PATHS.EXPENSES, expenses);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['expenses'] = false;
+  }, [expenses]);
+
+  useEffect(() => {
+    saveStorage('cash_reg', cashRegister);
+    if (!isRemoteUpdateRef.current['cash']) {
+      writeToRtdb(RTDB_PATHS.CASH_REGISTER, cashRegister);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['cash'] = false;
+  }, [cashRegister]);
+
+  useEffect(() => {
+    saveStorage('tables', tables);
+    if (!isRemoteUpdateRef.current['tables']) {
+      writeToRtdb(RTDB_PATHS.TABLES, tables);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['tables'] = false;
+  }, [tables]);
+
+  useEffect(() => {
+    saveStorage('kitchen', kitchenOrders);
+    if (!isRemoteUpdateRef.current['kitchen']) {
+      writeToRtdb(RTDB_PATHS.KITCHEN_ORDERS, kitchenOrders);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['kitchen'] = false;
+  }, [kitchenOrders]);
+
+  useEffect(() => {
+    saveStorage('staff', staff);
+    if (!isRemoteUpdateRef.current['staff']) {
+      writeToRtdb(RTDB_PATHS.STAFF, staff);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['staff'] = false;
+  }, [staff]);
+
+  useEffect(() => {
+    saveStorage('profile', businessProfile);
+    if (!isRemoteUpdateRef.current['profile']) {
+      writeToRtdb(RTDB_PATHS.BUSINESS_PROFILE, businessProfile);
+      setLastSyncTime(new Date());
+    }
+    isRemoteUpdateRef.current['profile'] = false;
+  }, [businessProfile]);
+
+  const manualSyncToCloud = async () => {
+    setFirebaseSyncing(true);
+    try {
+      await Promise.all([
+        writeToRtdb(RTDB_PATHS.MENU_ITEMS, menuItems),
+        writeToRtdb(RTDB_PATHS.BILLS, bills),
+        writeToRtdb(RTDB_PATHS.TABLES, tables),
+        writeToRtdb(RTDB_PATHS.KITCHEN_ORDERS, kitchenOrders),
+        writeToRtdb(RTDB_PATHS.CUSTOMERS, customers),
+        writeToRtdb(RTDB_PATHS.UDHAAR, udhaarTransactions),
+        writeToRtdb(RTDB_PATHS.SUPPLIERS, suppliers),
+        writeToRtdb(RTDB_PATHS.PURCHASES, purchases),
+        writeToRtdb(RTDB_PATHS.EXPENSES, expenses),
+        writeToRtdb(RTDB_PATHS.CASH_REGISTER, cashRegister),
+        writeToRtdb(RTDB_PATHS.STAFF, staff),
+        writeToRtdb(RTDB_PATHS.BUSINESS_PROFILE, businessProfile)
+      ]);
+      setLastSyncTime(new Date());
+      setNotifications(prev => [
+        {
+          id: `sync-${Date.now()}`,
+          type: 'success',
+          title: 'Cloud Sync Completed',
+          message: 'All cafe data successfully synchronized with Firebase Realtime Database!',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        },
+        ...prev
+      ]);
+    } catch (e) {
+      console.error('Manual sync failed:', e);
+    } finally {
+      setFirebaseSyncing(false);
+    }
+  };
+
+  const dismissCustomerCall = async (id: string) => {
+    setCustomerCalls(prev => prev.filter(c => c.id !== id));
+    dismissNotification(id);
+    await writeToRtdb(`${RTDB_PATHS.CUSTOMER_CALLS}/${id}/status`, 'resolved');
+  };
 
   const setLanguage = (lang: Language) => {
     setLanguageState(lang);
@@ -473,6 +819,271 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Clear cart
     clearCart();
+
+    return newBill;
+  };
+
+  // 1. DINE-IN WORKFLOW: Place order first -> Served to table
+  const placeTableOrder = (
+    tblNum: string | number,
+    itemsToOrder?: CartItem[],
+    guestName?: string,
+    guestPhone?: string,
+    notes?: string
+  ): KitchenOrder => {
+    const orderItems = itemsToOrder || cart;
+    if (orderItems.length === 0) {
+      throw new Error('No items in order');
+    }
+
+    const targetTableNum = Number(tblNum);
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Deduct stock for dishes sent to kitchen
+    setMenuItems(prev =>
+      prev.map(menuItem => {
+        const matchingCartItems = orderItems.filter(c => c.menuItemId === menuItem.id);
+        if (matchingCartItems.length > 0) {
+          const totalSold = matchingCartItems.reduce((s, c) => s + c.quantity, 0);
+          const newStock = Math.max(0, menuItem.stock - totalSold);
+          return { ...menuItem, stock: newStock };
+        }
+        return menuItem;
+      })
+    );
+
+    // Create KOT Ticket for Kitchen Screen
+    const kotNumber = 101 + kitchenOrders.length;
+    const newKitchenTicket: KitchenOrder = {
+      id: `ko-${Date.now()}`,
+      kotNumber,
+      billNumber: `KOT-${kotNumber}`,
+      tableNumber: String(targetTableNum),
+      orderType: 'dine_in',
+      items: orderItems.map(i => ({
+        name: i.name,
+        quantity: i.quantity,
+        variant: i.variantName,
+        notes: i.notes
+      })),
+      status: 'new',
+      createdAt: timeStr,
+      notes: notes || cartNotes || undefined
+    };
+
+    setKitchenOrders(prev => [newKitchenTicket, ...prev]);
+
+    // Update table with active items & running total
+    setTables(prev =>
+      prev.map(t => {
+        if (Number(t.number) === targetTableNum) {
+          const existingItems = t.activeItems || [];
+          // Merge items
+          const merged: CartItem[] = [...existingItems];
+          orderItems.forEach(newItem => {
+            const existingIdx = merged.findIndex(m => m.id === newItem.id);
+            if (existingIdx >= 0) {
+              merged[existingIdx] = {
+                ...merged[existingIdx],
+                quantity: merged[existingIdx].quantity + newItem.quantity
+              };
+            } else {
+              merged.push({ ...newItem });
+            }
+          });
+
+          const total = merged.reduce((sum, it) => sum + it.sellingPrice * it.quantity, 0);
+
+          return {
+            ...t,
+            status: 'occupied',
+            customerName: guestName?.trim() || customerName.trim() || t.customerName || 'Dine-In Guest',
+            customerPhone: guestPhone?.trim() || customerPhone.trim() || t.customerPhone,
+            orderTotal: total,
+            seatedAt: t.seatedAt || timeStr,
+            itemsCount: merged.reduce((s, i) => s + i.quantity, 0),
+            activeItems: merged
+          };
+        }
+        return t;
+      })
+    );
+
+    // Success notification
+    setNotifications(prev => [
+      {
+        id: `kot-${Date.now()}`,
+        type: 'success',
+        title: `Order Placed for Table ${targetTableNum}`,
+        message: `${orderItems.reduce((s, i) => s + i.quantity, 0)} dishes sent to kitchen. Diners will pay after eating.`,
+        timestamp: timeStr
+      },
+      ...prev
+    ]);
+
+    // Clear cart
+    clearCart();
+
+    return newKitchenTicket;
+  };
+
+  // 2. DINE-IN WORKFLOW: Settle bill after eating -> Collect payment & free table
+  const settleTableBill = (
+    tblNum: string | number,
+    paymentMethod: PaymentMethod,
+    billDiscount = 0,
+    cashRec?: number,
+    cashChg?: number,
+    notes?: string
+  ): Bill => {
+    const targetTableNum = Number(tblNum);
+    const targetTable = tables.find(t => Number(t.number) === targetTableNum);
+
+    // Collect items from table or kitchen
+    const tableItems = targetTable?.activeItems && targetTable.activeItems.length > 0
+      ? targetTable.activeItems
+      : cart.length > 0
+      ? cart
+      : [
+          {
+            id: `served-item-${Date.now()}`,
+            menuItemId: 'm-served',
+            name: `Table ${targetTableNum} Dine-in Order`,
+            nameMr: `टेबल ${targetTableNum} ऑर्डर`,
+            nameHi: `टेबल ${targetTableNum} आर्डर`,
+            quantity: 1,
+            sellingPrice: targetTable?.orderTotal || 100,
+            costPrice: 0,
+            illustration: 'coffee'
+          }
+        ];
+
+    const subtotal = tableItems.reduce((s, i) => s + i.sellingPrice * i.quantity, 0) || targetTable?.orderTotal || 0;
+    const finalTotal = Math.max(0, subtotal - billDiscount);
+    const costTotal = tableItems.reduce((s, i) => s + (i.costPrice || 0) * i.quantity, 0);
+
+    const now = new Date();
+    const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+    const nextBillNum = `SYS-${1045 + bills.length}`;
+
+    const newBill: Bill = {
+      id: `bill-${Date.now()}`,
+      billNumber: nextBillNum,
+      items: tableItems,
+      customerId: undefined,
+      customerName: targetTable?.customerName || customerName.trim() || undefined,
+      customerPhone: targetTable?.customerPhone || customerPhone.trim() || undefined,
+      orderType: 'dine_in',
+      tableNumber: String(targetTableNum),
+      subtotal,
+      discount: billDiscount,
+      tax: 0,
+      total: finalTotal,
+      costTotal,
+      profit: finalTotal - costTotal,
+      paymentMethod,
+      paymentStatus: paymentMethod === 'udhaar' ? 'pending' : 'paid',
+      cashReceived: paymentMethod === 'cash' ? (cashRec || finalTotal) : undefined,
+      cashChange: paymentMethod === 'cash' ? (cashChg || 0) : undefined,
+      createdAt: formattedDate,
+      createdBy: 'Santosh (Owner)',
+      notes: notes || undefined
+    };
+
+    // Update Customer
+    const phoneClean = (targetTable?.customerPhone || customerPhone).trim();
+    const nameClean = (targetTable?.customerName || customerName).trim();
+    if (phoneClean || nameClean) {
+      const existing = customers.find(c => c.phone === phoneClean && phoneClean !== '');
+      if (existing) {
+        newBill.customerId = existing.id;
+        setCustomers(prev =>
+          prev.map(c =>
+            c.id === existing.id
+              ? {
+                  ...c,
+                  totalOrders: c.totalOrders + 1,
+                  totalSpent: c.totalSpent + finalTotal,
+                  udhaarBalance: paymentMethod === 'udhaar' ? c.udhaarBalance + finalTotal : c.udhaarBalance,
+                  lastVisit: 'Today'
+                }
+              : c
+          )
+        );
+      } else {
+        const newCustId = `c-${Date.now()}`;
+        newBill.customerId = newCustId;
+        setCustomers(prev => [
+          {
+            id: newCustId,
+            name: nameClean || 'Dine-In Customer',
+            phone: phoneClean || 'N/A',
+            totalOrders: 1,
+            totalSpent: finalTotal,
+            udhaarBalance: paymentMethod === 'udhaar' ? finalTotal : 0,
+            lastVisit: 'Today'
+          },
+          ...prev
+        ]);
+      }
+    }
+
+    // Udhaar transaction
+    if (paymentMethod === 'udhaar') {
+      setUdhaarTransactions(prev => [
+        {
+          id: `ut-${Date.now()}`,
+          customerId: newBill.customerId || 'c-guest',
+          customerName: nameClean || 'Customer',
+          customerPhone: phoneClean || 'N/A',
+          type: 'credit',
+          amount: finalTotal,
+          remainingBalance: finalTotal,
+          date: formattedDate,
+          billId: newBill.id,
+          billNumber: newBill.billNumber,
+          note: notes || `Table ${targetTableNum} bill settled as Udhaar`
+        },
+        ...prev
+      ]);
+    }
+
+    // Cash Register update
+    if (paymentMethod === 'cash') {
+      setCashRegister(prev => ({
+        ...prev,
+        cashSales: prev.cashSales + finalTotal,
+        expectedCash: prev.expectedCash + finalTotal
+      }));
+    }
+
+    // Free the table back to available
+    setTables(prev =>
+      prev.map(t =>
+        Number(t.number) === targetTableNum
+          ? {
+              ...t,
+              status: 'available',
+              customerName: undefined,
+              customerPhone: undefined,
+              orderTotal: undefined,
+              seatedAt: undefined,
+              itemsCount: undefined,
+              activeItems: []
+            }
+          : t
+      )
+    );
+
+    // Save Bill
+    setBills(prev => [newBill, ...prev]);
+
+    // Open receipt modal
+    setActiveReceiptBill(newBill);
 
     return newBill;
   };
@@ -720,7 +1331,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // Tables
+  // Tables CRUD
+  const addTable = (tableData: { number: number; name: string; capacity?: number; floor?: string }) => {
+    const num = Number(tableData.number);
+    if (!num || num <= 0) {
+      return { success: false, error: 'Please enter a valid table number.' };
+    }
+    const existing = tables.find(t => Number(t.number) === num);
+    if (existing) {
+      return { success: false, error: `Table number T-${num} already exists.` };
+    }
+    const newTable: TableItem = {
+      id: `table-${Date.now()}`,
+      number: num,
+      tableNumber: num,
+      name: tableData.name.trim() || `Table ${num}`,
+      capacity: Number(tableData.capacity) || 4,
+      floor: tableData.floor?.trim() || 'Main Floor',
+      status: 'available'
+    };
+    setTables(prev => [...prev, newTable].sort((a, b) => a.number - b.number));
+    return { success: true };
+  };
+
+  const updateTable = (tableId: string, tableData: Partial<TableItem>) => {
+    if (tableData.number !== undefined) {
+      const num = Number(tableData.number);
+      if (!num || num <= 0) {
+        return { success: false, error: 'Please enter a valid table number.' };
+      }
+      const duplicate = tables.find(
+        t => t.id !== tableId && Number(t.number) === num
+      );
+      if (duplicate) {
+        return { success: false, error: `Table number T-${num} is already in use.` };
+      }
+    }
+    setTables(prev =>
+      prev
+        .map(t =>
+          t.id === tableId
+            ? {
+                ...t,
+                ...tableData,
+                number: tableData.number !== undefined ? Number(tableData.number) : t.number,
+                tableNumber: tableData.number !== undefined ? Number(tableData.number) : t.tableNumber,
+                capacity: tableData.capacity !== undefined ? Number(tableData.capacity) : t.capacity,
+                floor: tableData.floor !== undefined ? tableData.floor : t.floor,
+                name: tableData.name !== undefined ? tableData.name.trim() : t.name
+              }
+            : t
+        )
+        .sort((a, b) => a.number - b.number)
+    );
+    return { success: true };
+  };
+
+  const deleteTable = (tableId: string) => {
+    const target = tables.find(t => t.id === tableId);
+    if (!target) return { success: false, error: 'Table not found.' };
+
+    if (target.status === 'occupied' || target.status === 'bill_pending') {
+      return {
+        success: false,
+        error: `Cannot delete Table T-${target.number} while it is occupied. Please clear or complete the bill first.`
+      };
+    }
+
+    setTables(prev => prev.filter(t => t.id !== tableId));
+    return { success: true };
+  };
+
   const updateTableStatus = (
     tableId: string,
     status: TableItem['status'],
@@ -851,6 +1532,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cartTotal,
         bills,
         completeBill,
+        placeTableOrder,
+        settleTableBill,
         refundBill,
         activeReceiptBill,
         setActiveReceiptBill,
@@ -871,6 +1554,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addCashTransaction,
         tables,
         setSelectedTable,
+        addTable,
+        updateTable,
+        deleteTable,
         updateTableStatus,
         kitchenOrders,
         updateKitchenStatus,
@@ -883,6 +1569,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBusinessProfile,
         notifications,
         dismissNotification,
+        firebaseConnected,
+        firebaseSyncing,
+        lastSyncTime,
+        manualSyncToCloud,
+        customerCalls,
+        dismissCustomerCall,
         resetAllData,
         resetToDefaultData
       }}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
@@ -22,9 +22,25 @@ import { ReportsScreen } from './components/reports/ReportsScreen';
 import { StaffScreen } from './components/staff/StaffScreen';
 import { SettingsScreen } from './components/settings/SettingsScreen';
 import { ReceiptModal } from './components/pos/ReceiptModal';
+import { CustomerTableModal } from './components/tables/CustomerTableModal';
 
 const MainLayout: React.FC = () => {
   const { activeTab, activeReceiptBill, setActiveReceiptBill } = useApp();
+  const [scannedTableNumber, setScannedTableNumber] = useState<number | null>(null);
+
+  // Auto-detect ?table=X from URL when scanned via phone camera QR
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tableParam = params.get('table');
+      if (tableParam) {
+        const num = parseInt(tableParam, 10);
+        if (!isNaN(num) && num > 0) {
+          setScannedTableNumber(num);
+        }
+      }
+    }
+  }, []);
 
   const renderActiveScreen = () => {
     switch (activeTab) {
@@ -89,6 +105,15 @@ const MainLayout: React.FC = () => {
         <ReceiptModal
           bill={activeReceiptBill}
           onClose={() => setActiveReceiptBill(null)}
+        />
+      )}
+
+      {/* Customer Self-Order Table Portal when scanning Table QR code */}
+      {scannedTableNumber !== null && (
+        <CustomerTableModal
+          tableNumber={scannedTableNumber}
+          isOpen={scannedTableNumber !== null}
+          onClose={() => setScannedTableNumber(null)}
         />
       )}
     </div>

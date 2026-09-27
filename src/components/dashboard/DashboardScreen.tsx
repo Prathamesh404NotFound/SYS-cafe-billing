@@ -54,7 +54,6 @@ export const DashboardScreen: React.FC = () => {
   const paymentBreakdown = {
     cash: bills.filter(b => b.paymentMethod === 'cash' && !b.isRefunded).reduce((s, b) => s + b.total, 0),
     upi: bills.filter(b => b.paymentMethod === 'upi' && !b.isRefunded).reduce((s, b) => s + b.total, 0),
-    card: bills.filter(b => b.paymentMethod === 'card' && !b.isRefunded).reduce((s, b) => s + b.total, 0),
     udhaar: bills.filter(b => b.paymentMethod === 'udhaar' && !b.isRefunded).reduce((s, b) => s + b.total, 0)
   };
 
@@ -247,15 +246,6 @@ export const DashboardScreen: React.FC = () => {
               <span className="font-bold text-gray-900">₹{paymentBreakdown.upi}</span>
             </div>
 
-            {/* Card */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-                <span className="font-semibold text-gray-700">Card:</span>
-              </div>
-              <span className="font-bold text-gray-900">₹{paymentBreakdown.card}</span>
-            </div>
-
             {/* Udhaar */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -275,10 +265,6 @@ export const DashboardScreen: React.FC = () => {
             <div
               style={{ width: `${todaySales > 0 ? (paymentBreakdown.upi / todaySales) * 100 : 0}%` }}
               className="bg-purple-500 h-full"
-            />
-            <div
-              style={{ width: `${todaySales > 0 ? (paymentBreakdown.card / todaySales) * 100 : 0}%` }}
-              className="bg-blue-500 h-full"
             />
             <div
               style={{ width: `${todaySales > 0 ? (paymentBreakdown.udhaar / todaySales) * 100 : 0}%` }}

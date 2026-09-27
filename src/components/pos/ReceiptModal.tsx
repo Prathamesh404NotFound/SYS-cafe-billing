@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Printer,
   Share2,
@@ -6,10 +6,12 @@ import {
   CheckCircle2,
   PlusCircle,
   Phone,
-  Receipt as ReceiptIcon
+  Receipt as ReceiptIcon,
+  QrCode
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Bill } from '../../types';
+import { generateUpiUri, generateQrDataUrl } from '../../utils/qrCode';
 
 interface ReceiptModalProps {
   bill: Bill | null;
@@ -19,6 +21,26 @@ interface ReceiptModalProps {
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ bill, onClose }) => {
   const { businessProfile, t, setActiveTab } = useApp();
   const printRef = useRef<HTMLDivElement>(null);
+  const [receiptQrUrl, setReceiptQrUrl] = useState<string>('');
+
+  useEffect(() => {
+    if (bill && businessProfile.upiId) {
+      const upiUri = generateUpiUri({
+        upiId: businessProfile.upiId,
+        payeeName: businessProfile.name,
+        amount: bill.total,
+        billNumber: bill.billNumber,
+        note: `SYS-Bill-${bill.billNumber}`
+      });
+      generateQrDataUrl(upiUri, {
+        width: 220,
+        margin: 1,
+        color: { dark: '#000000', light: '#ffffff' }
+      })
+        .then(setReceiptQrUrl)
+        .catch(err => console.error('Failed to generate receipt QR:', err));
+    }
+  }, [bill?.id, bill?.total, bill?.billNumber, businessProfile.upiId, businessProfile.name]);
 
   if (!bill) return null;
 
@@ -189,6 +211,26 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ bill, onClose }) => 
                 </div>
               )}
             </div>
+
+            {/* Scannable UPI QR on Receipt */}
+            {receiptQrUrl && (
+              <div className="py-2.5 my-1.5 border-t border-dashed border-gray-300 flex flex-col items-center justify-center text-center">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-700 block">
+                  Scan to Pay / Verify
+                </span>
+                <img
+                  src={receiptQrUrl}
+                  alt="Bill Payment QR"
+                  className="w-24 h-24 object-contain my-1 border border-gray-200 p-0.5 rounded bg-white"
+                />
+                <span className="text-[9px] font-mono text-gray-600 block">
+                  UPI: {businessProfile.upiId}
+                </span>
+                <span className="text-[9px] font-bold text-gray-900">
+                  Total: ₹{bill.total.toFixed(2)}
+                </span>
+              </div>
+            )}
 
             {/* Footer Thank You Note */}
             <div className="text-center pt-3 border-t border-dashed border-gray-300 text-[10px] text-gray-500 space-y-1">
