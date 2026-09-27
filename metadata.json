@@ -1,0 +1,6 @@
+{
+  "name": "SYS Cafe",
+  "description": "Complete cafe POS, inventory, sales, refill, customer udhaar, expenses, and reporting system for SYS Cafe.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
